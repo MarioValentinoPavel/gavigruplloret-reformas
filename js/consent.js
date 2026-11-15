@@ -7,9 +7,9 @@
   const TX = {
     es: {
       h: 'Cookies, solo las justas',
-      p: 'No usamos cookies de publicidad ni de analítica. Guardamos en tu navegador el idioma y esta elección. Si aceptas, cargaremos también el mapa de Google, que usa sus propias cookies.',
+      p: 'No usamos cookies de publicidad ni de analítica. Guardamos en tu navegador solo esta elección. Si aceptas, cargaremos también el mapa de Google, que usa sus propias cookies.',
       more: 'Política de cookies', reject: 'Rechazar', config: 'Configurar', accept: 'Aceptar todo',
-      ph: 'Configurar cookies', tech: 'Necesarias', techP: 'Recuerdan tu idioma y tu elección sobre cookies. Siempre activas.',
+      ph: 'Configurar cookies', tech: 'Necesarias', techP: 'Recuerdan tu elección sobre cookies. Siempre activas.',
       maps: 'Mapas y contenido externo', mapsP: 'Muestra el mapa de Google Maps dentro de la web. Al cargarlo, Google puede usar sus cookies.',
       on: 'Siempre activas', save: 'Guardar mi elección', all: 'Aceptar todo', close: 'Cerrar', label: 'Aviso de cookies',
       mapBtn: 'Ver el mapa', mapTxt: 'El mapa es de Google y usa sus cookies. Se carga solo si lo aceptas.'

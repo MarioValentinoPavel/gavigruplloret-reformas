@@ -106,7 +106,8 @@
   }
   let introDone = false;
   // i18n.js reescribe los [data-i18n] al aplicar el idioma: el titular se parte en palabras después, nunca antes
-  const langReady = new Promise((res) => document.addEventListener('langchange', res, { once: true }));
+  // sin traducciones: el texto ya es el definitivo al cargar
+  const langReady = window.I18N ? new Promise((res) => document.addEventListener('langchange', res, { once: true })) : Promise.resolve();
   document.addEventListener('langchange', () => {
     if (introDone) $('[data-split]').removeAttribute('aria-label');
     fitFooter();
@@ -264,7 +265,8 @@
       const ex = ax + (left ? -28 : 28);
       const on = li.classList.contains('on') ? ' class="on"' : '';
       const op = labelsOn ? 1 : 0;
-      s += `<path${on} style="opacity:${op ? '' : 0}" d="M${x0.toFixed(1)} ${y0.toFixed(1)} H${ex.toFixed(1)} L${ax.toFixed(1)} ${ay.toFixed(1)}"/><circle${on} style="opacity:${op}" cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="5"/>`;
+      const lc = `--lc:var(--c-${{ roof: 'roof', facade: 'fac', floor: 'floor', inst: 'inst', base: 'base' }[tag]})`;
+      s += `<path${on} style="${lc};opacity:${op ? '' : 0}" d="M${x0.toFixed(1)} ${y0.toFixed(1)} H${ex.toFixed(1)} L${ax.toFixed(1)} ${ay.toFixed(1)}"/><circle${on} style="${lc};opacity:${op}" cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="5"/>`;
     });
     leaders.innerHTML = s;
   }
@@ -281,7 +283,7 @@
     const ok = (() => { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (_) { return false; } })();
     if (!ok) { html.classList.add('no-gl'); return; }
     try {
-      const mod = await import('./maqueta.js?v=3');
+      const mod = await import('./maqueta.js?v=4');
       maq = await mod.createMaqueta(canvas, { onFrame: drawLeaders });
     } catch (err) { console.warn('Maqueta no disponible', err); html.classList.add('no-gl'); return; }
     maq.setRect(() => {
@@ -290,6 +292,7 @@
       return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), w: lerp(a.w, b.w, t), h: lerp(a.h, b.h, t) };
     }, true);
     scrollState();
+    maq.setFocus(focusIdx >= 0 ? TAGS[focusIdx] : null);   // por si la página se abrió ya dentro del despiece
     if (reduce) maq.skipIntro(); else maq.intro();
     // solo se dibuja mientras la portada o el despiece están a la vista
     let vis = new Set();

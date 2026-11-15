@@ -148,12 +148,31 @@ export async function createMaqueta(canvas, opt = {}) {
     return g;
   }
 
-  // Base de la maqueta (fija)
+  // Base de la maqueta (fija): un hexágono como la G de la marca, canto amarillo
   const board = new THREE.Group(); root.add(board);
-  bx(board, 'board', 'board', -9, -.4, -7.2, 9, 0, 8.2, { edges: true });
-  const shadowPlane = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.ShadowMaterial({ opacity: .13 }));
-  shadowPlane.rotation.x = -Math.PI / 2; shadowPlane.position.y = -.401; shadowPlane.receiveShadow = true;
+  const HEX_R = 11.6, HEX_H = .6;
+  const hs = new THREE.Shape();
+  for (let i = 0; i < 6; i++) { const a = Math.PI / 3 * i + Math.PI / 4; const x = HEX_R * Math.cos(a), z = HEX_R * Math.sin(a); i ? hs.lineTo(x, z) : hs.moveTo(x, z); }
+  hs.closePath();
+  const hexGeo = new THREE.ExtrudeGeometry(hs, { depth: HEX_H, bevelEnabled: false });
+  hexGeo.rotateX(Math.PI / 2);
+  const plinth = new THREE.Mesh(hexGeo, [M('board', 'board'), M('board', 'yellow')]);
+  plinth.receiveShadow = true; board.add(plinth);
+  const pe = new THREE.LineSegments(new THREE.EdgesGeometry(hexGeo), LM('board')); board.add(pe);
+  const shadowPlane = new THREE.Mesh(new THREE.PlaneGeometry(140, 140), new THREE.ShadowMaterial({ opacity: .13 }));
+  shadowPlane.rotation.x = -Math.PI / 2; shadowPlane.position.y = -HEX_H - .002; shadowPlane.receiveShadow = true;
   scene.add(shadowPlane);
+  // árbol y banco sobre la base
+  const tree = (x, z, s = 1) => {
+    cyl(board, 'board', 'wood', .14 * s, x, 0, z, x, 1.6 * s, z, 8);
+    for (const [dx, dy, dz, r] of [[0, 2.3, 0, .95], [.55, 1.9, .3, .65], [-.5, 2.0, -.25, .7]]) {
+      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r * s, 1), M('board', 'leaf'));
+      m.position.set(x + dx * s, dy * s, z + dz * s); m.castShadow = true; board.add(m);
+    }
+  };
+  tree(-8.2, 2.6, 1.05); tree(-7.4, -4.2, .8);
+  bx(board, 'board', 'wood', 5.6, .32, 6.3, 7.4, .4, 6.75);
+  bx(board, 'board', 'anth', 5.7, 0, 6.4, 5.8, .32, 6.65); bx(board, 'board', 'anth', 7.2, 0, 6.4, 7.3, .32, 6.65);
 
   // Planta baja (construcción)
   const pb = layer('base', 'base');
@@ -297,7 +316,52 @@ export async function createMaqueta(canvas, opt = {}) {
   bx(worker, 'fig', 'wood', -.3, .74, -.28, .3, .8, .26);           // asiento (viaja con el operario)
   cyl(worker, 'fig', 'anth', .14, .5, .1, 0, .5, .45, 0);            // cubo de trabajo
 
+  // Color mediterráneo: toldos rayados, persianas verdes y plantas en los balcones
+  const awningTex = (() => {
+    const c = document.createElement('canvas'); c.width = 128; c.height = 8; const g = c.getContext('2d');
+    for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#fbf7ee' : '#f2b300'; g.fillRect(i * 16, 0, 16, 8); }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.repeat.set(1.5, 1); return t;
+  })();
+  const awningMat = new THREE.MeshStandardMaterial({ map: awningTex, roughness: .8, side: THREE.DoubleSide });
+  awningMat.userData = { baseOpacity: 1, baseTransparent: false, tag: 'facade' }; mats['facade:awning'] = awningMat;
+  for (const lv of [L.f2, L.f3]) for (const cx of [-4, 0, 4]) {
+    const aw = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 1.25), awningMat);
+    aw.position.set(cx, lv + 2.62, D2 + .5); aw.rotation.x = -Math.PI / 2 + .62; aw.castShadow = true; fFront.add(aw);
+    bx(fFront, 'facade', 'yellow', cx - 1.05, lv + 2.33, D2 + .98, cx + 1.05, lv + 2.43, D2 + 1.0);
+  }
+  M('facade', 'leaf');
+  const shutter = new THREE.MeshStandardMaterial({ color: 0x3f7d5c, roughness: .7 });
+  shutter.userData = { baseOpacity: 1, baseTransparent: false, tag: 'facade' }; mats['facade:shutter'] = shutter;
+  for (const lv of [L.f1, L.f2, L.f3]) for (const [h0, h1] of [[-3.1, -1.7], [1.0, 2.4]]) {
+    for (const [z0, z1] of [[h0 - .72, h0 - .04], [h1 + .04, h1 + .72]]) {
+      const m = new THREE.Mesh(UNIT, shutter); m.scale.set(.06, 1.3, z1 - z0); m.position.set(W2 + .04, lv + 1.85, (z0 + z1) / 2); m.castShadow = true; fSide.add(m);
+    }
+  }
+  const potPlant = (g, x, y, z, s = 1) => {
+    cyl(g, 'facade', 'yellow', .2 * s, x, y, z, x, y + .32 * s, z, 12).material = M('facade', 'pot', { color: 0xc9643b, roughness: .8 });
+    const lf = new THREE.Mesh(new THREE.IcosahedronGeometry(.36 * s, 1), M('facade', 'leaf')); lf.position.set(x, y + .62 * s, z); lf.castShadow = true; g.add(lf);
+  };
+  potPlant(fFront, -5.2, L.f1 + .3, D2 + .8); potPlant(fFront, 1.1, L.f1 + .3, D2 + .85, .9);
+  potPlant(fFront, 5.0, L.f2 + .3, D2 + .8); potPlant(fFront, -2.9, L.f3 + .3, D2 + .8, 1.1);
+
+  // Furgoneta de la empresa delante del edificio
+  {
+    const v = new THREE.Group(); pb.add(v);
+    const vm = (k) => M('base', k);
+    bx(v, 'base', 'yellow', -4.6, .38, 6.05, -1.2, 2.1, 7.75);                 // caja
+    bx(v, 'base', 'yellow', -1.2, .38, 6.05, -.25, 1.45, 7.75);                // morro
+    bx(v, 'base', 'glass', -1.18, 1.45, 6.15, -.55, 2.0, 7.65);               // parabrisas
+    bx(v, 'base', 'anth', -4.65, .3, 6.0, -.2, .5, 7.8);                       // faldón
+    for (const [wx, wz] of [[-3.9, 6.02], [-3.9, 7.78], [-1.0, 6.02], [-1.0, 7.78]]) {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(.38, .38, .26, 18), vm('anth'));
+      w.rotation.x = Math.PI / 2; w.position.set(wx, .38, wz); w.castShadow = true; v.add(w);
+    }
+    const logo = new THREE.Mesh(new THREE.PlaneGeometry(3.1, .275), signMesh.material);
+    logo.position.set(-2.95, 1.45, 7.76); v.add(logo);
+  }
+
   // Cubierta
+  const fans = [];
   const roof = layer('roof', 'roof');
   bx(roof, 'roof', 'slab', -W2, L.roof, -D2, W2, L.roof + .3, D2, { edges: true });
   const py0 = L.roof + .3, py1 = L.roof + 1.25;
@@ -311,6 +375,9 @@ export async function createMaqueta(canvas, opt = {}) {
     bx(roof, 'roof', 'white', cx - .7, py0, -3.9, cx + .7, py0 + .95, -3.2, { edges: true });
     const fan = new THREE.Mesh(new THREE.CircleGeometry(.34, 24), M('roof', 'anth'));
     fan.position.set(cx - .1, py0 + .48, -3.19); roof.add(fan);
+    const blades = new THREE.Group(); blades.position.set(cx - .1, py0 + .48, -3.17); roof.add(blades);
+    for (let k = 0; k < 3; k++) { const b = new THREE.Mesh(UNIT, M('roof', 'white')); b.scale.set(.06, .58, .02); b.rotation.z = k * Math.PI / 3 * 2; blades.add(b); }
+    fans.push(blades);
   }
   bx(roof, 'roof', 'slab', -1.5, py0, -.5, 4.6, py0 + .05, 3.6, { cast: false });   // tela impermeable (zona)
   // canalón y bajante en la esquina delantera derecha
@@ -335,6 +402,13 @@ export async function createMaqueta(canvas, opt = {}) {
   };
   branch(F1, L.f1); branch(F2, L.f2); branch(F3, L.f3);
   cyl(F3, 'inst', 'copper', .04, rx + .55, L.f3 + 2.45, rz + .05, 3.5, L.f3 + 2.45, rz + .05);
+  // agua y gas que suben por los montantes
+  const flow = [];
+  const flowGeo = new THREE.SphereGeometry(.11, 10, 8);
+  for (const [px, key] of [[rx, 'water'], [rx + .22, 'yellow']]) {
+    const fm = M('inst', key + 'Glow', { color: key === 'water' ? 0x7fc0ff : 0xffd24d, emissive: key === 'water' ? 0x2a7de0 : 0xf2a900, emissiveIntensity: .9, roughness: .3 });
+    for (let k = 0; k < 7; k++) { const s = new THREE.Mesh(flowGeo, fm); s.position.set(px, 0, rz); s.userData.ph = k / 7; inst.add(s); flow.push(s); }
+  }
   cyl(roof, 'inst', 'copper', .04, 1.8, py0 + .25, -3.5, rx + .55, py0 + .25, -3.5);
 
   // ---------- estado
@@ -359,7 +433,12 @@ export async function createMaqueta(canvas, opt = {}) {
   const CENTER = new THREE.Vector3(0, 6.5, 0);
 
   // caja que ocupa la maqueta (con despiece) en coordenadas de mundo
-  const baseBox = new THREE.Box3(new THREE.Vector3(-9, -.4, -7.2), new THREE.Vector3(9, 15.6, 8.2));
+  const baseBox = new THREE.Box3(new THREE.Vector3(-11.25, -HEX_H, -11.25), new THREE.Vector3(11.25, 15.6, 11.25));
+  const TINT = { roof: new THREE.Color(0xdf5f33), facade: new THREE.Color(0x10958a), fig: new THREE.Color(0x10958a), floor: new THREE.Color(0x3f9a5f), inst: new THREE.Color(0x2a66d4), base: new THREE.Color(0xf2b300) };
+  const TINTABLE = new Set(['white', 'wall', 'slab', 'inner']);
+  const tintAmt = {};
+  const animOn = !opt.capture && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let frameN = 0;
   function currentBox(e) {
     const b = baseBox.clone();
     b.max.y += 6.2 * e;  // cubierta
@@ -431,6 +510,20 @@ export async function createMaqueta(canvas, opt = {}) {
       const nv = cur + (target - cur) * Math.min(1, dt * 7);
       if (Math.abs(nv - cur) > .001) { focusAmt[t] = nv; changed = true; } else focusAmt[t] = target;
     }
+    // la capa enfocada se tiñe de su color
+    for (const t of TAGS) {
+      const target = t === focus || (focus === 'facade' && t === 'fig') ? 1 : 0;
+      const cur = tintAmt[t] || 0, nv = cur + (target - cur) * Math.min(1, dt * 6);
+      if (Math.abs(nv - cur) > .001) { tintAmt[t] = nv; changed = true; } else tintAmt[t] = target;
+    }
+    for (const id in mats) {
+      const m = mats[id];
+      const key = id.split(':')[1];
+      if (TINTABLE.has(key) && TINT[m.userData.tag]) {
+        if (!m.userData.baseColor) m.userData.baseColor = m.color.clone();
+        m.color.copy(m.userData.baseColor).lerp(TINT[m.userData.tag], .34 * (tintAmt[m.userData.tag] || 0));
+      }
+    }
     for (const id in mats) {
       const m = mats[id]; const a = focusAmt[m.userData.tag] ?? 1;
       const op = m.userData.baseOpacity * a;
@@ -451,7 +544,18 @@ export async function createMaqueta(canvas, opt = {}) {
     const fch = applyFocus(dt);
     const introRunning = introOn && now - introStart < 3200;
     if (introOn && !introRunning) introOn = false;
-    if (!(dirty || moving || fch || introRunning)) return;
+    // detalles vivos: ventiladores, operario que se balancea, agua y gas que circulan
+    let anim = false;
+    if (animOn) {
+      frameN++;
+      anim = !small || frameN % 2 === 0;
+      const s = now / 1000;
+      fans.forEach((f, i) => { f.rotation.z = -s * 6 - i; });
+      worker.rotation.z = .12 + Math.sin(s * 1.25) * .06;
+      const h = layers.inst.g.children[0].scale.y * RH;
+      flow.forEach((p) => { p.position.y = ((p.userData.ph + s * .11) % 1) * h; });
+    }
+    if (!(dirty || moving || fch || introRunning || anim)) return;
     dirty = false;
     root.rotation.y = px * .09; root.rotation.x = py * .025;
     applyLayers(now);

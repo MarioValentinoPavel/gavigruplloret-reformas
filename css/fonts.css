@@ -1,0 +1,8 @@
+/* Tipografías alojadas en la propia web (Fontshare, ITF Free Font License). Sin peticiones a terceros. */
+@font-face {
+  font-family: "Excon";
+  src: url("../assets/fonts/excon-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}

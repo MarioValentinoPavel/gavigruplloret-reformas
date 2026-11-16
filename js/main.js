@@ -239,6 +239,7 @@
     const idx = p < .2 ? -1 : Math.min(4, Math.floor((p - .2) / .158));
     if (idx !== focusIdx) {
       focusIdx = idx;
+      leadDirty = true;   // al mostrar u ocultar listas cambia dónde salen las líneas
       lys.forEach((li, i) => li.classList.toggle('on', i === idx));
       steps.forEach((s, i) => s.classList.toggle('on', i <= idx));
       if (maq) maq.setFocus(idx >= 0 ? TAGS[idx] : null);
@@ -249,26 +250,43 @@
     if (maq) { maq.setExplode(e); maq.invalidate(); }
   }
 
+  // Líneas guía: los elementos se crean una vez y el punto de salida de cada etiqueta se mide solo
+  // cuando cambia la maquetación (tamaño, capa activa); en cada fotograma solo se proyecta el ancla.
+  const NS = 'http://www.w3.org/2000/svg';
+  const LC = { roof: 'roof', facade: 'fac', floor: 'floor', inst: 'inst', base: 'base' };
+  const lead = lys.map((li) => {
+    const p = document.createElementNS(NS, 'path'), c = document.createElementNS(NS, 'circle');
+    p.style.setProperty('--lc', `var(--c-${LC[li.dataset.tag]})`); c.style.setProperty('--lc', `var(--c-${LC[li.dataset.tag]})`);
+    c.setAttribute('r', '5'); leaders.append(p, c);
+    return { li, p, c, x0: 0, y0: 0, left: li.dataset.side === 'l' };
+  });
+  let leadDirty = true, leadShown = null;
+  const markLeaders = () => { leadDirty = true; };
+  addEventListener('resize', markLeaders);
+  function measureLeaders() {
+    const pr = pin.getBoundingClientRect();
+    lead.forEach((o) => {
+      const n = o.li.querySelector('.ly-n').getBoundingClientRect(), t = o.li.querySelector('.ly-t').getBoundingClientRect();
+      o.x0 = (o.left ? t.right + 14 : t.left - 14) - pr.left;
+      o.y0 = n.top + n.height / 2 - pr.top;
+    });
+    leadDirty = false;
+  }
   function drawLeaders() {
-    if (!maq || mqMobile.matches) { leaders.innerHTML = ''; return; }
+    const show = !!maq && !mqMobile.matches && labelsOn;
+    if (show !== leadShown) { leadShown = show; leaders.style.visibility = show ? 'visible' : 'hidden'; }
+    if (!show) return;
     const pr = pin.getBoundingClientRect();
     if (pr.bottom < 0 || pr.top > innerHeight) return;
-    let s = '';
-    lys.forEach((li, i) => {
-      const tag = li.dataset.tag;
-      const a = maq.project(tag);
-      const t = li.querySelector('.ly-n').getBoundingClientRect();
-      const left = li.dataset.side === 'l';
-      const x0 = left ? t.right + 6 + li.querySelector('.ly-t').getBoundingClientRect().width + 14 : t.left - 6 - li.querySelector('.ly-t').getBoundingClientRect().width - 14;
-      const y0 = t.top + t.height / 2 - pr.top;
-      const ax = a.x - pr.left, ay = a.y - pr.top;
-      const ex = ax + (left ? -28 : 28);
-      const on = li.classList.contains('on') ? ' class="on"' : '';
-      const op = labelsOn ? 1 : 0;
-      const lc = `--lc:var(--c-${{ roof: 'roof', facade: 'fac', floor: 'floor', inst: 'inst', base: 'base' }[tag]})`;
-      s += `<path${on} style="${lc};opacity:${op ? '' : 0}" d="M${x0.toFixed(1)} ${y0.toFixed(1)} H${ex.toFixed(1)} L${ax.toFixed(1)} ${ay.toFixed(1)}"/><circle${on} style="${lc};opacity:${op}" cx="${ax.toFixed(1)}" cy="${ay.toFixed(1)}" r="5"/>`;
+    if (leadDirty) measureLeaders();
+    lead.forEach((o) => {
+      const a = maq.project(o.li.dataset.tag);
+      const ax = a.x - pr.left, ay = a.y - pr.top, ex = ax + (o.left ? -28 : 28);
+      const on = o.li.classList.contains('on');
+      o.p.setAttribute('d', `M${o.x0.toFixed(1)} ${o.y0.toFixed(1)} H${ex.toFixed(1)} L${ax.toFixed(1)} ${ay.toFixed(1)}`);
+      o.c.setAttribute('cx', ax.toFixed(1)); o.c.setAttribute('cy', ay.toFixed(1));
+      o.p.classList.toggle('on', on); o.c.classList.toggle('on', on);
     });
-    leaders.innerHTML = s;
   }
 
   // las capas: clic para ir a su paso
@@ -283,7 +301,7 @@
     const ok = (() => { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (_) { return false; } })();
     if (!ok) { html.classList.add('no-gl'); return; }
     try {
-      const mod = await import('./maqueta.js?v=4');
+      const mod = await import('./maqueta.js?v=5');
       maq = await mod.createMaqueta(canvas, { onFrame: drawLeaders });
     } catch (err) { console.warn('Maqueta no disponible', err); html.classList.add('no-gl'); return; }
     maq.setRect(() => {
@@ -310,6 +328,7 @@
     // si cambia el tamaño de la portada (fuentes, idioma, menú), se vuelve a encuadrar
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => maq.invalidate()); ro.observe(heroStage); ro.observe(todoStage); ro.observe($('.hero-txt')); }
     document.addEventListener('langchange', () => maq.invalidate());
+    (document.fonts?.ready || Promise.resolve()).then(() => { leadDirty = true; maq.invalidate(); });
   }
 
   const onScroll = () => {
@@ -318,6 +337,22 @@
   };
   if (lenis) lenis.on('scroll', onScroll); else addEventListener('scroll', onScroll, { passive: true });
   onScroll();
+
+  /* ---------- la luz de «Cómo trabajamos» recorre toda la línea (horizontal o vertical según el ancho) */
+  const stepsEl = $('.steps');
+  const mqSteps = matchMedia('(max-width: 640px)');
+  const measureSteps = () => {
+    const vertical = mqSteps.matches;
+    const len = (vertical ? stepsEl.clientHeight : stepsEl.clientWidth) - 11;
+    stepsEl.style.setProperty('--len', Math.max(0, len) + 'px');
+  };
+  if (window.ResizeObserver) new ResizeObserver(measureSteps).observe(stepsEl); else addEventListener('resize', measureSteps);
+  mqSteps.addEventListener('change', measureSteps);
+  measureSteps();
+
+  /* ---------- animaciones decorativas en pausa cuando su sección no se ve */
+  const ioAnim = new IntersectionObserver((es) => es.forEach((e) => { e.target.dataset.anim = e.isIntersecting ? 'on' : 'off'; }), { rootMargin: '80px 0px' });
+  document.querySelectorAll('.bar, .trades, .svc, .proc, .quote').forEach((el) => ioAnim.observe(el));
 
   intro();
   bootMaqueta();

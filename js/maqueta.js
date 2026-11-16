@@ -19,12 +19,14 @@ const W2 = 6, D2 = 4.5, T = 0.25;
 export async function createMaqueta(canvas, opt = {}) {
   const small = Math.min(innerWidth, innerHeight) < 700;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: !!opt.capture, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, small ? 1.75 : 2));
+  // resolución limitada: a partir de 1.5 la diferencia no se ve y el coste se dispara
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false;   // las sombras se recalculan solo cuando algo se desplaza
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
@@ -411,6 +413,37 @@ export async function createMaqueta(canvas, opt = {}) {
   }
   cyl(roof, 'inst', 'copper', .04, 1.8, py0 + .25, -3.5, rx + .55, py0 + .25, -3.5);
 
+  // ---------- optimización: las cajas sueltas de cada grupo se juntan en una malla instanciada por material
+  // (cientos de llamadas de dibujo pasan a unas pocas) y sus aristas en un solo trazo.
+  function batch(g) {
+    const buckets = new Map(), edgePts = [];
+    let edgeMat = null;
+    for (const m of [...g.children]) {
+      if (!m.isMesh || m.geometry !== UNIT) continue;
+      m.updateMatrix();
+      const key = m.material.uuid + (m.castShadow ? 's' : 'n');
+      if (!buckets.has(key)) buckets.set(key, { mat: m.material, cast: m.castShadow, list: [] });
+      buckets.get(key).list.push(m.matrix.clone());
+      for (const e of m.children) if (e.isLineSegments) {
+        edgeMat = e.material;
+        const p = UNIT_EDGES.attributes.position;
+        for (let i = 0; i < p.count; i++) edgePts.push(new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(m.matrix));
+      }
+      g.remove(m);
+    }
+    for (const b of buckets.values()) {
+      const im = new THREE.InstancedMesh(UNIT, b.mat, b.list.length);
+      b.list.forEach((mx, i) => im.setMatrixAt(i, mx));
+      im.castShadow = b.cast; im.receiveShadow = true;
+      g.add(im);
+    }
+    if (edgePts.length) {
+      const geo = new THREE.BufferGeometry().setFromPoints(edgePts);
+      g.add(new THREE.LineSegments(geo, edgeMat));
+    }
+  }
+  [board, ...Object.values(layers).map((l) => l.g)].forEach(batch);
+
   // ---------- estado
   const EXPLODE = {
     roof: new THREE.Vector3(0, 6.2, 0), facadeFront: new THREE.Vector3(0, 0, 6.6), facadeSide: new THREE.Vector3(6.4, 0, 0),
@@ -502,7 +535,8 @@ export async function createMaqueta(canvas, opt = {}) {
     }
   }
 
-  function applyFocus(dt) {
+  let matsSynced = false;
+  function applyFocus(dt, force) {
     let changed = false;
     for (const t of TAGS) {
       const target = !focus || t === focus || (focus === 'facade' && t === 'fig') ? 1 : .14;
@@ -516,6 +550,9 @@ export async function createMaqueta(canvas, opt = {}) {
       const cur = tintAmt[t] || 0, nv = cur + (target - cur) * Math.min(1, dt * 6);
       if (Math.abs(nv - cur) > .001) { tintAmt[t] = nv; changed = true; } else tintAmt[t] = target;
     }
+    // los materiales solo se tocan mientras cambia el foco (no en cada fotograma)
+    if (!changed && !force && matsSynced) return false;
+    matsSynced = !changed;
     for (const id in mats) {
       const m = mats[id];
       const key = id.split(':')[1];
@@ -544,24 +581,31 @@ export async function createMaqueta(canvas, opt = {}) {
     const fch = applyFocus(dt);
     const introRunning = introOn && now - introStart < 3200;
     if (introOn && !introRunning) introOn = false;
-    // detalles vivos: ventiladores, operario que se balancea, agua y gas que circulan
+    // detalles vivos: ventiladores, operario que se balancea, agua y gas que circulan.
+    // Van a ~30 fps (20 en móvil) y no recalculan sombras: lo caro solo se hace cuando algo se mueve de verdad.
+    const geo = dirty || moving || fch || introRunning;
     let anim = false;
     if (animOn) {
       frameN++;
-      anim = !small || frameN % 2 === 0;
+      anim = frameN % (small ? 3 : 2) === 0;
+    }
+    if (!(geo || anim)) return;
+    if (animOn) {
       const s = now / 1000;
       fans.forEach((f, i) => { f.rotation.z = -s * 6 - i; });
       worker.rotation.z = .12 + Math.sin(s * 1.25) * .06;
       const h = layers.inst.g.children[0].scale.y * RH;
       flow.forEach((p) => { p.position.y = ((p.userData.ph + s * .11) % 1) * h; });
     }
-    if (!(dirty || moving || fch || introRunning || anim)) return;
     dirty = false;
-    root.rotation.y = px * .09; root.rotation.x = py * .025;
-    applyLayers(now);
-    frame();
+    if (geo) {
+      root.rotation.y = px * .09; root.rotation.x = py * .025;
+      applyLayers(now);
+      frame();
+    }
+    renderer.shadowMap.needsUpdate = geo;
     renderer.render(scene, camera);
-    opt.onFrame && opt.onFrame();
+    if (geo && opt.onFrame) opt.onFrame();
   }
 
   function resize() {
@@ -583,7 +627,7 @@ export async function createMaqueta(canvas, opt = {}) {
     invalidate() { dirty = true; },
     start() { if (!running) { running = true; last = performance.now(); raf = requestAnimationFrame(tick); } },
     stop() { running = false; if (raf) cancelAnimationFrame(raf); raf = 0; },
-    renderNow() { applyFocus(1); applyLayers(performance.now()); frame(); renderer.render(scene, camera); },
+    renderNow() { applyFocus(1, true); applyLayers(performance.now()); frame(); renderer.shadowMap.needsUpdate = true; renderer.render(scene, camera); },
     resize,
     // posición en pantalla (px) del punto de una capa
     project(tag) {
@@ -604,7 +648,7 @@ export async function createMaqueta(canvas, opt = {}) {
       renderer.setPixelRatio(1); renderer.setSize(w, h, false);
       explode = o.explode ?? 0; focus = o.focus ?? null;
       TAGS.forEach((t) => (focusAmt[t] = !focus || t === focus || (focus === 'facade' && t === 'fig') ? 1 : .14));
-      applyFocus(0); introOn = false; worker.position.y = 7.4;
+      applyFocus(0, true); introOn = false; worker.position.y = 7.4;
       root.rotation.set(0, 0, 0);
       applyLayers(performance.now());
       (o.hide || []).forEach((id) => { if (layers[id]) layers[id].g.visible = false; });
@@ -614,6 +658,7 @@ export async function createMaqueta(canvas, opt = {}) {
       const cam = new THREE.OrthographicCamera(-half * w / h, half * w / h, half, -half, .1, 200);
       cam.position.set(c.x + dist * Math.cos(el) * Math.sin(az), c.y + dist * Math.sin(el), c.z + dist * Math.cos(el) * Math.cos(az));
       cam.lookAt(c); cam.updateProjectionMatrix();
+      renderer.shadowMap.needsUpdate = true;
       renderer.render(scene, cam);
       const url = renderer.domElement.toDataURL(o.type || 'image/webp', o.q ?? .9);
       scene.background = prevBg; explode = prevExplode; focus = prevFocus;
